@@ -1,0 +1,126 @@
+/*
+ * Copyright (C) 2015 Red Hat, Inc.
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ *
+ */
+
+syntax = "proto3";
+/* Notes :
+   o proto3 fields are optional by default
+   o required fields are not allowed in proto3 */
+
+package flow;
+
+enum FlowProtocol {
+	ETHERNET = 0;
+	IPV4 = 1;
+	TCPPORT = 2;
+	UDPPORT = 3;
+	SCTPPORT = 4;
+	IPV6 = 5;
+	ICMPV4 = 6;
+	ICMPV6 = 7;
+}
+
+message FlowLayer {
+	FlowProtocol Protocol = 1;
+	string A = 3;
+	string B = 4;
+	int64 ID = 5;
+}
+
+enum ICMPType {
+	UNKNOWN = 0;
+	DESTINATION_UNREACHABLE = 1;
+	ECHO = 2;
+	NEIGHBOR = 3;
+	ADDRESS_MASK = 4;
+	INFO = 5;
+	PARAMETER_PROBLEM = 6;
+	REDIRECT = 7;
+	ROUTER = 8;
+	SOURCE_QUENCH = 9;
+	TIME_EXCEEDED = 10;
+	TIMESTAMP = 11;
+	PACKET_TOO_BIG = 12;
+}
+
+message ICMPLayer {
+	ICMPType Type = 1;
+	uint32 Code = 2;
+	uint32 ID = 3;
+}
+
+message FlowMetric {
+	int64 ABPackets = 2;
+	int64 ABBytes = 3;
+	int64 BAPackets = 4;
+	int64 BABytes = 5;
+}
+
+message Flow {
+/* Flow Universally Unique IDentifier
+   flow.UUID is unique in the universe, as it should be used as a key of an
+   hashtable. By design 2 different flows, their UUID are always different.
+   flow.UUID can be used as Database Index.
+*/
+	string UUID = 1;
+	string LayersPath = 2;
+
+/* Application is the last layer which is not a payload.
+*/
+	string Application = 3;
+
+/* Data Flow info */
+	FlowLayer Link = 20;
+	FlowLayer Network = 21;
+	FlowLayer Transport = 22;
+	ICMPLayer ICMP = 23;
+
+/* Data Flow Metric info from the 1st layer
+   amount of data between two updates
+*/
+	FlowMetric LastUpdateMetric = 31;
+/* Total amount of data for the whole flow duration */
+	FlowMetric Metric = 32;
+
+  int64 Start = 10;
+  int64 Last = 11;
+  int64 LastUpdateStart = 12;
+  int64 LastUpdateLast = 13;
+
+/* Flow Tracking IDentifier, from 1st packet bytes
+   flow.TrackingID could be used to identify an unique flow whatever it has
+   been captured on the infrastructure. flow.TrackingID is calculated from
+   the bytes of the first packet of his session.
+   flow.TrackingID can be used as a Tag.
+*/
+	string TrackingID = 50;
+	string L3TrackingID = 51;
+
+/* Flow Parent UUID is used as reference to the parent flow
+   Flow.ParentUUID is the same value that point to his parent flow.UUID
+*/
+	string ParentUUID = 6;
+
+/* Topology info */
+	string NodeTID = 33;
+	string ANodeTID = 34;
+	string BNodeTID = 35;
+}

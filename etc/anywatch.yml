@@ -1,0 +1,221 @@
+# Skydive config file
+
+# host_id is used to reference the agent by default set to hostname
+# host_id:
+
+# WebSocket Ping/Pong timeout in second
+ws_pong_timeout: 5
+# maximum number of topology aggregated messages before sending
+# ws_bulk_maxmsgs: 100
+# duration in seconds before flushing topology aggregated messages
+# ws_bulk_maxdelay: 2
+
+cache:
+  # expiration time in second
+  expire: 300
+
+  # cleanup interval in second
+  cleanup: 30
+
+openstack:
+  auth_url: http://xxx.xxx.xxx.xxx:5000/v2.0
+  username: admin
+  password: password123
+  tenant_name: admin
+  region_name: RegionOne
+  # The endpoint_type value must be 'public', 'internal' or 'admin'
+  endpoint_type: public
+  # When using Keystone V3, domain_name needs to be specified
+  # domain_name: MyDomain
+
+analyzer:
+  # address and port for the analyzer API, Format: addr:port.
+  # Default addr is 127.0.0.1
+  listen: :8082
+  # File path to X509 Certificate and Private Key to enable TLS communication
+  # Must be different than the agent
+  # The listen port+1 will be used
+  # X509_cert: /etc/ssl/certs/analyzer.domain.com.crt
+  # X509_key:  /etc/ssl/certs/analyzer.domain.com.key
+
+  # Wihout any new packets, a flow expires after flowtable_expire
+  # seconds
+  flowtable_expire: 600
+  # Seconds between flow updates (metrics, enhancements,...)
+  flowtable_update: 60
+
+  # Flow storage engine
+  storage:
+      # Available: elasticsearch, orientdb
+      #backend: elasticsearch
+      # maximum number of flows aggregated between two data store inserts
+      # bulk_insert: 100
+      # deadline of each bulk insert in second
+      # bulk_insert_deadline: 5
+  topology:
+    # Define static interfaces and links updating Skydive topology
+    # Can be useful to define external resources like : TOR, Router, etc.
+    #
+    # A description language similar to the dot language is used to define
+    # interfaces and links. An arrow (->) is used to define a link between
+    # two interfaces (parent -> child).
+    # Square brackets after the arrow is used to define additional metadata
+    # of the link (->[key=value,..]). Each interface described will be
+    # created in the topology excepted interfaces with the local prefix.
+    # In that specific case the interface of the local host will be used.
+    # Attributes of interfaces are declared using square brackets ([]).
+    # The following example creates a TOR1 node linked to a TOR1_PORT1 which is
+    # linked to the local interface eth0.
+    fabric:
+      # - TOR1[Name=tor1] -> [color=red] TOR1_PORT1[Name=port1, MTU=1500]
+      # - TOR1_PORT1 -> *[Type=host]/eth0
+  # update rate of links in seconds
+  bandwidth_update_rate: 5
+  # interface metrics - 'netlink'
+  # captured flows TxBytes + RxByte - 'flows' (need to turn on capture)
+  bandwidth_source: netlink
+  # 'absolute' - thresholds in Kbit
+  # 'relative' - thresholds in % relative to link speed reported by netlink
+  bandwidth_threshold: absolute
+  bandwidth_absolute_active: 1
+  bandwidth_absolute_warning: 10
+  bandwidth_absolute_alert: 100
+  bandwidth_relative_active: 0.1
+  bandwidth_relative_warning: 0.4
+  bandwidth_relative_alert: 0.8
+
+# list of analyzers used by analyzers and agents
+analyzers:
+  - 0.0.0.0:8082
+
+agent:
+  # address and port for the agent API, Format: addr:port.
+  # Default addr is 127.0.0.1
+  listen: :8081
+  # File path to X509 Certificate and Private Key to enable TLS communication
+  # Must be different than the analyzer and unique per agent (recommended)
+  # X509_cert: /etc/ssl/certs/agent.domain.com.crt
+  # X509_key:  /etc/ssl/certs/agent.domain.com.key
+  # Server name field specified in TLS communications.
+  # Not required, but can be used to allow virtual hosting
+  # X509_servername: domain.com
+  #
+  topology:
+    # Probes used to capture topology informations like interfaces,
+    # bridges, namespaces, etc...
+    # Available: ovsdb, docker, neutron, opencontrail
+    probes:
+      - snmp
+    snmpdetectip: 192.168.1.36
+    snmpdetectperiod: 10
+    snmpdetectlayer: 10
+    snmpdetectcommunity: public
+      # - ovsdb
+      # - docker
+      # - neutron
+      # - opencontrail
+      #netlink:
+      # delay in seconds between two metric updates
+      # metrics_update: 30
+  flow:
+    # Probes used to capture traffic.
+    probes:
+      # gopacket probe will use either pcap or afpacket according to the type of
+      # the capture. Default is afpacket.
+      - gopacket
+      # pcapsocket probe creates a TCP socket where PCAP traces can
+      # be written into
+      - pcapsocket
+      # ovsflow probe will be used to capture traffic on openvswitch bridges
+      # - ovssflow
+    # Period in second to get capture stats from the probe. Note this
+    # currently only works for the pcap probe
+    # stats_update: 1
+  metadata:
+    info: This is compute node
+
+sflow:
+  # Default listening address is 127.0.0.1
+  # bind_address: 127.0.0.1
+
+  # Port min/max used when starting a sflow probe, a agent will be started
+  # with a port from this range
+  # port_min: 6345
+  # port_max: 6355
+
+ovs:
+  # ovsdb connection, Format supported :
+  # * addr:port
+  # * tcp://addr:port
+  # * unix:///var/run/openvswitch/db.sock
+  # If you use the tcp connection you need to authorize connexion to ovsdb agent
+  # at least locally
+  # % sudo ovs-appctl -t ovsdb-server ovsdb-server/add-remote ptcp:6400:127.0.0.1
+  # ovsdb: unix:///var/run/openvswitch/db.sock
+
+docker:
+  # url: unix:///var/run/docker.sock
+
+netns:
+  # allow to specify where the netns probe is watching network namespace
+  # run_path: /var/run/netns
+
+opencontrail:
+  # Host address of the OpenContrail vrouter agent
+  # host: localhost
+  # TCP port of the OpenContrail vrouter agent
+  # port: 8086
+  # UDP dest port for MPLS traffic
+  # mpls_udp_port: 51234
+
+storage:
+  elasticsearch:
+    host: 0.0.0.0:9200
+    # maxconns: 10
+    # retry: 60
+    # bulk_maxdocs: 100
+    # bulk_maxdelay: 5
+
+  # OrientDB connection informations
+  # orientdb:
+  #  addr: http://127.0.0.1:2480
+  #  database: Skydive
+  #  username: root
+  #  password: hello
+
+graph:
+  # graph backend memory, elasticsearch, orientdb
+  backend: memory
+
+logging:
+  level: DEBUG
+  backends:
+    - stderr
+    - file
+  # - syslog
+  # configuration of the 'file' backend
+  file:
+    path: /var/log/anywatch.log
+  # format of the logging messages
+  # format: "%{color}%{time} %{id} %{shortfile} %{shortpkg} %{longfunc} > %{level:.4s} %{id:03x}%{color:reset} %{message}"
+
+auth:
+  # specify the type of authentication mechanism: noauth, basic, keystone (default: noauth)
+  # type: basic
+  # basic:
+    # file: /etc/skydive/htpasswd
+  # The 'analyzer_username' and 'analyzer_password' parameters are
+  # used by the agent to authenticate against the analyzer
+  analyzer_username: admin
+  analyzer_password: password
+
+etcd:
+  # when 'embedded' is set to true, the analyzer will start an embedded etcd server
+  # embedded: true
+  # listen: localhost:2379
+
+  # both the analyzers and the agents make use of etcd
+  # servers:
+  #   - http://127.0.0.1:2379
+
+  # client_timeout: 5
