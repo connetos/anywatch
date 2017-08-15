@@ -103,6 +103,8 @@ const (
 	OidLldpRemPortId           = ".1.0.8802.1.1.2.1.4.1.1.7"
 	OidLldpRemManAddrIfId      = ".1.0.8802.1.1.2.1.4.2.1.4"
 	OidLldpLocalManAddrIfId    = ".1.0.8802.1.1.2.1.3.8.1.5"
+	OidLldpLocalPortId         = ".1.0.8802.1.1.2.1.3.7.1.3"
+	OidLldpLocalPortDesc       = ".1.0.8802.1.1.2.1.3.7.1.4"
 )
 
 const (
@@ -254,11 +256,12 @@ type switchEdge struct {
 */
 
 type switchLldp struct {
-	ifindex    int
-	localPort  string
-	remotePort string
-	chassisId  string
-	manAddress string
+	locPortNum    int
+	localPort     string
+	localPortDesc string
+	remotePort    string
+	chassisId     string
+	manAddress    string
 }
 
 type deviceInfo struct {
@@ -269,6 +272,7 @@ type deviceInfo struct {
 	switchMac    string
 	layer        int
 	root         bool
+	vendor       string
 	baseIntfMap  map[int]*switchBaseIntf
 	lldpMap      map[int]*switchLldp
 	intfIpMap    map[string]*ipIntfAddrTable
@@ -354,7 +358,7 @@ func trace() {
 	fmt.Printf("%s:%d %s\n", file, line, f.Name())
 }
 
-func getDeviceNameSwitchMAC(ipAddr string, port uint16) (string, string, string, error) {
+func getDeviceNameSwitchMAC(ipAddr string, port uint16) (string, string, string, string, error) {
 
 	var switchMac, deviceName string
 
@@ -369,7 +373,7 @@ func getDeviceNameSwitchMAC(ipAddr string, port uint16) (string, string, string,
 	err := params.Connect()
 	if err != nil {
 		logging.GetLogger().Errorf("Connect() err: %v", err)
-		return "", "", "", err
+		return "", "", "", "", err
 	}
 	defer params.Conn.Close()
 
@@ -377,17 +381,37 @@ func getDeviceNameSwitchMAC(ipAddr string, port uint16) (string, string, string,
 	result, err := params.Get(oids)
 	if err != nil {
 		logging.GetLogger().Errorf("Get() err: %v", err)
-		return "", "", "", err
+		return "", "", "", "", err
 	}
 
 	variable := result.Variables[0]
 	deviceName = string(variable.Value.([]byte))
 
+	oids = []string{OidSysObjectId}
+	result, err = params.Get(oids)
+	if err != nil {
+		logging.GetLogger().Errorf("Get() err: %v", err)
+		return "", "", "", "", err
+	}
+
+	variable = result.Variables[0]
+	objectId := variable.Value.(string)
+	var vendor string
+
+	objectIdStr := strings.TrimPrefix(objectId, OidEnterprises+".")
+	objectIdSplit := strings.SplitN(objectIdStr, ".", 2)
+
+	enterpriseObjectId := objectIdSplit[0]
+
+	if enterpriseObjectId == "44781" {
+		vendor = "connetos"
+	}
+
 	oids = []string{OidDot1dBaseBridgeAddress}
 	result, err = params.Get(oids)
 	if err != nil {
 		logging.GetLogger().Errorf("Get() err: %v", err)
-		return "", "", "", err
+		return "", "", "", "", err
 	}
 
 	variable = result.Variables[0]
@@ -398,7 +422,7 @@ func getDeviceNameSwitchMAC(ipAddr string, port uint16) (string, string, string,
 
 	boardSnProbe = ipAddr + "-" + switchMac
 
-	return deviceName, switchMac, confInfo.readKey, nil
+	return deviceName, switchMac, confInfo.readKey, vendor, nil
 }
 
 func getDeviceType(ipAddr string, port uint16) (int, error) {
@@ -446,32 +470,28 @@ func getDeviceType(ipAddr string, port uint16) (int, error) {
 	oids = []string{OidBaseNumPorts}
 	result, err = params.Get(oids)
 	if err == nil {
-		oids = []string{OidBaseNumPorts}
+		oids = []string{OidStpRootCost}
 		result, err = params.Get(oids)
 		if err == nil {
-			oids = []string{OidStpRootCost}
+			oids = []string{OidStpRootPort}
 			result, err = params.Get(oids)
 			if err == nil {
-				oids = []string{OidStpRootPort}
-				result, err = params.Get(oids)
-				if err == nil {
-					flagBridgeMib = true
-					logging.GetLogger().Debugf("Ip (%s) is bridge device", ipAddr)
+				flagBridgeMib = true
+				logging.GetLogger().Debugf("Ip (%s) is bridge device", ipAddr)
 
-					/*
-						oid = OidTpFdbPort
+				/*
+					oid = OidTpFdbPort
+					err = params.Walk(oid, doNothing)
+					if err == nil {
+						logging.GetLogger().Debugf("Walk OidTpFdbPort success")
+					} else {
+						oid = OidTpFdb2Port
 						err = params.Walk(oid, doNothing)
 						if err == nil {
-							logging.GetLogger().Debugf("Walk OidTpFdbPort success")
-						} else {
-							oid = OidTpFdb2Port
-							err = params.Walk(oid, doNothing)
-							if err == nil {
-								logging.GetLogger().Debugf("Walk OidTpFdb2Port success")
-							}
+							logging.GetLogger().Debugf("Walk OidTpFdb2Port success")
 						}
-					*/
-				}
+					}
+				*/
 			}
 		}
 	}
@@ -529,7 +549,7 @@ func storeDeviceInfo2Map(boardSn string, device *deviceInfo) error {
 
 func getDeviceInfo(ipAddr string, readKey *string, layer int) (int, error) {
 
-	deviceName, switchMac, readKeyFind, err := getDeviceNameSwitchMAC(ipAddr, confInfo.port)
+	deviceName, switchMac, readKeyFind, vendor, err := getDeviceNameSwitchMAC(ipAddr, confInfo.port)
 	if err != nil {
 		return UnknownType, err
 	}
@@ -548,6 +568,7 @@ func getDeviceInfo(ipAddr string, readKey *string, layer int) (int, error) {
 	device.boardSn = boardSnProbe
 	device.switchMac = switchMac
 	device.layer = layer
+	device.vendor = vendor
 	if ipAddr == confInfo.coreIp {
 		device.root = true
 	}
@@ -1176,42 +1197,6 @@ func getIntfIpbyIndex(ipAddr string, ifindex int) (string, error) {
 	return "", errors.New("fail")
 }
 
-func getNexthopInfo(scanLayer int, ipAddr string, ipRoute *ipRouteTable) {
-
-	logging.GetLogger().Debugf("getNexthopInfo of nexthop(%s)", ipRoute.nexthop)
-
-	deviceName, readKeyFind, snmpVersion, err := getDeviceNameSwitchMAC(ipRoute.nexthop, confInfo.port)
-	if err != nil {
-		logging.GetLogger().Error("getDeviceNameSwitchMAC of nexthop(%s) fail", ipRoute.nexthop)
-		return
-	}
-	logging.GetLogger().Debugf("IP %s name: %s, readkey: %s, snmpVersion: %s", ipRoute.nexthop, deviceName, readKeyFind, snmpVersion)
-
-	deviceType, err := getDeviceType(ipRoute.nexthop, confInfo.port)
-	if err != nil {
-		logging.GetLogger().Error("getDeviceType of nexthop(%s) fail", ipRoute.nexthop)
-		return
-	}
-	logging.GetLogger().Debugf("IP %s device type: %d", ipRoute.nexthop, deviceType)
-
-	preIp, err := getIntfIpbyIndex(ipAddr, ipRoute.ifindex)
-	if err != nil {
-		logging.GetLogger().Error("getIntfIpbyIndex of ifindex %d fail", ipRoute.ifindex)
-		return
-	}
-
-	var topoRe *topoRelation = new(topoRelation)
-
-	topoRe.topoLayer = scanLayer
-	topoRe.devName = deviceName
-	topoRe.devIp = ipRoute.nexthop
-	topoRe.preIp = preIp
-	topoRe.readKey = confInfo.readKey
-	topoRe.devType = deviceType
-
-	storeTopo2Map(ipRoute.nexthop, topoRe)
-}
-
 func printIpRoute(ipRoute *ipRouteTable) {
 	logging.GetLogger().Debugf("range dest %s", ipRoute.dest)
 	logging.GetLogger().Debugf("      mask %s", ipRoute.mask)
@@ -1245,47 +1230,62 @@ func storeLldpInfo2Map(ifindex int, lldpInfo *switchLldp) int {
 	return 0
 }
 
-func getLldpRemChassisIdCallback(pdu gosnmp.SnmpPDU) error {
+func getLldpLocPortId(pdu gosnmp.SnmpPDU) error {
 
-	mac := string(pdu.Value.([]byte))
-
-	if len(mac) == 0 {
-		return nil
+	if pdu.Value == nil {
+		logging.GetLogger().Errorf("get the local port failed")
+		return errors.New("get lldpLocPortId fail")
 	}
 
-	markNumIndexStr := strings.TrimPrefix(pdu.Name, OidLldpRemChassisId+".")
-	markNumIndex := strings.SplitN(markNumIndexStr, ".", 3)
+	locPortId := string(pdu.Value.([]byte))
 
-	ifindex, err := strconv.Atoi(markNumIndex[2])
+	markNumIndexStr := strings.TrimPrefix(pdu.Name, OidLldpLocalPortId+".")
+
+	lldpLocPortNum, err := strconv.Atoi(markNumIndexStr)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("ifindex %d\n", ifindex)
-	fmt.Printf("MAC %s\n", mac)
-
-	var lldpInfo *switchLldp = new(switchLldp)
-	lldpInfo.ifindex = ifindex
-	lldpInfo.chassisId = mac
-
-	storeLldpInfo2Map(ifindex, lldpInfo)
+	if deviceInfo, ok := deviceInfoMap[boardSnProbe]; ok {
+		if _, ok = deviceInfo.lldpMap[lldpLocPortNum]; ok {
+			deviceInfo.lldpMap[lldpLocPortNum].localPort = locPortId
+		}
+	}
 
 	return nil
 }
 
-func storeLldpRemPortId(ifindex int, port string) int {
+func getLldpLocPortDesc(pdu gosnmp.SnmpPDU) error {
+
+	if pdu.Value == nil {
+		logging.GetLogger().Errorf("get the local port desc failed")
+		return errors.New("get lldpLocPortId desc fail")
+	}
+
+	locPortDesc := string(pdu.Value.([]byte))
+
+	markNumIndexStr := strings.TrimPrefix(pdu.Name, OidLldpLocalPortDesc+".")
+
+	lldpLocPortNum, err := strconv.Atoi(markNumIndexStr)
+	if err != nil {
+		return err
+	}
+
 	if deviceInfo, ok := deviceInfoMap[boardSnProbe]; ok {
-		if lldpInfo, ok := deviceInfo.lldpMap[ifindex]; ok {
-			lldpInfo.remotePort = port
-		} else {
-			logging.GetLogger().Errorf("Find ifindex(%d) in storeLldpRemPortId fail", ifindex)
+		if lldpInfo, ok := deviceInfo.lldpMap[lldpLocPortNum]; ok {
+			lldpInfo.localPortDesc = locPortDesc
 		}
 	}
 
-	return 0
+	return nil
 }
 
 func getLldpRemPortIdCallback(pdu gosnmp.SnmpPDU) error {
+	if pdu.Value == nil {
+		logging.GetLogger().Errorf("get the remote port desc failed")
+		return errors.New("get lldpRemPortId desc fail")
+	}
+
 	port := string(pdu.Value.([]byte))
 
 	if port == "" {
@@ -1295,12 +1295,18 @@ func getLldpRemPortIdCallback(pdu gosnmp.SnmpPDU) error {
 	markNumIndexStr := strings.TrimPrefix(pdu.Name, OidLldpRemPortId+".")
 	markNumIndex := strings.SplitN(markNumIndexStr, ".", 3)
 
-	ifindex, err := strconv.Atoi(markNumIndex[2])
+	ifindex, err := strconv.Atoi(markNumIndex[1])
 	if err != nil {
 		return err
 	}
 
-	storeLldpRemPortId(ifindex, port)
+	var lldpInfo *switchLldp = new(switchLldp)
+	lldpInfo.locPortNum = ifindex
+	lldpInfo.remotePort = port
+
+	if deviceInfo, ok := deviceInfoMap[boardSnProbe]; ok {
+		deviceInfo.lldpMap[ifindex] = lldpInfo
+	}
 
 	return nil
 }
@@ -1312,23 +1318,9 @@ func storeLldpRemManAddr(ifindex int, manAddress string) int {
 				return 0
 			}
 			lldpInfo.manAddress = manAddress
-			//switchMac2ManagementIp[lldpInfo.chassisId] = manAddress
 		} else {
 			logging.GetLogger().Errorf("Find ifindex(%d) in lldpMap fail", ifindex)
 		}
-	}
-
-	return 0
-}
-
-func storeLldpLocalManAddr(manAddress string) int {
-	if deviceInfo, ok := deviceInfoMap[boardSnProbe]; ok {
-		if deviceInfo.managementIp != "" && deviceInfo.managementIp != manAddress {
-			logging.GetLogger().Errorf("Get different managementIp (%s) in deive %s with %s", manAddress, deviceInfo.name, deviceInfo.managementIp)
-			return -1
-		}
-		deviceInfo.managementIp = manAddress
-		//deviceInfo.info = deviceInfo.managementIp + "(" + deviceInfo.switchMac + ")"
 	}
 
 	return 0
@@ -1342,38 +1334,26 @@ func getLldpRemManAddrIfIdCallback(pdu gosnmp.SnmpPDU) error {
 	}
 
 	remManAddrStr := strings.TrimPrefix(pdu.Name, OidLldpRemManAddrIfId+".")
-	remManAddrStrSplit := strings.SplitN(remManAddrStr, ".", 5)
 
-	ifindex, err := strconv.Atoi(remManAddrStrSplit[2])
+	var splitNum = 5
+	if deviceInfo, ok := deviceInfoMap[boardSnProbe]; ok {
+		if deviceInfo.vendor == "connetos" {
+			splitNum = 5
+		} else {
+			splitNum = 6
+		}
+	}
+
+	remManAddrStrSplit := strings.SplitN(remManAddrStr, ".", splitNum)
+
+	ifindex, err := strconv.Atoi(remManAddrStrSplit[1])
 	if err != nil {
 		return err
 	}
 
-	/*
-		if !isValidIp(manAddress) {
-			logging.GetLogger().Errorf("LLDP get remote manAddress of ifindex %d is 0.0.0.0", ifindex)
-			return errors.New("zero address")
-		}
-	*/
-
-	manAddress := remManAddrStrSplit[4]
+	manAddress := remManAddrStrSplit[splitNum-1]
 
 	storeLldpRemManAddr(ifindex, manAddress)
-
-	return nil
-}
-
-func getLldpLocalManAddrIfIdCallback(pdu gosnmp.SnmpPDU) error {
-	localManAddrStr := strings.TrimPrefix(pdu.Name, OidLldpLocalManAddrIfId+".")
-	localManAddrStrSplit := strings.SplitN(localManAddrStr, ".", 2)
-
-	manAddress := localManAddrStrSplit[1]
-
-	if !isValidIp(manAddress) {
-		return nil
-	}
-
-	storeLldpLocalManAddr(manAddress)
 
 	return nil
 }
@@ -1398,22 +1378,6 @@ func getLldpInfo(ipAddr string, readKey *string) error {
 	}
 	defer params.Conn.Close()
 
-	oid = OidLldpLocalManAddrIfId
-	err = params.Walk(oid, getLldpLocalManAddrIfIdCallback)
-	if err == nil {
-		logging.GetLogger().Debugf("get the local managementIp ip(%s) success", ipAddr)
-	} else {
-		logging.GetLogger().Debugf("get the local managementIp of ip(%s) error(%s)", ipAddr, err)
-	}
-
-	oid = OidLldpRemChassisId
-	err = params.Walk(oid, getLldpRemChassisIdCallback)
-	if err == nil {
-		logging.GetLogger().Debugf("get the remote chassisId ip(%s) success", ipAddr)
-	} else {
-		logging.GetLogger().Debugf("get the remote chassisId of ip(%s) error(%s)", ipAddr, err)
-	}
-
 	oid = OidLldpRemPortId
 	err = params.Walk(oid, getLldpRemPortIdCallback)
 	if err == nil {
@@ -1428,6 +1392,24 @@ func getLldpInfo(ipAddr string, readKey *string) error {
 		logging.GetLogger().Debugf("get the remote managementIp of ip(%s) success", ipAddr)
 	} else {
 		logging.GetLogger().Debugf("get the remote managementIp of ip(%s) error(%s)", ipAddr, err)
+	}
+
+	oid = OidLldpLocalPortId
+	err = params.Walk(oid, getLldpLocPortId)
+	if err == nil {
+		logging.GetLogger().Debugf("get the local port of ip(%s) success", ipAddr)
+	} else {
+		logging.GetLogger().Debugf("get the local port of ip(%s) error(%s)", ipAddr, err)
+		return err
+	}
+
+	oid = OidLldpLocalPortDesc
+	err = params.Walk(oid, getLldpLocPortDesc)
+	if err == nil {
+		logging.GetLogger().Debugf("get the local port desc of ip(%s) success", ipAddr)
+	} else {
+		logging.GetLogger().Debugf("get the local port desc of ip(%s) error(%s)", ipAddr, err)
+		return err
 	}
 
 	return err
@@ -1454,7 +1436,7 @@ func getBaseIntfCallback(pdu gosnmp.SnmpPDU) error {
 	var baseIntf *switchBaseIntf = new(switchBaseIntf)
 	baseIntf.ifindex = ifindex
 	baseIntf.name = name
-	baseIntf.pVid = 1
+	//baseIntf.pVid = 1
 
 	storeBaseIntf2Map(ifindex, baseIntf)
 
@@ -1473,22 +1455,13 @@ func getBaseIntfDescCallback(pdu gosnmp.SnmpPDU) error {
 	return nil
 }
 
-func storeBaseIntfPvid2Map(ifindex int, pvid uint) int {
-	if deviceInfo, ok := deviceInfoMap[boardSnProbe]; ok {
-		if _, ok = deviceInfo.baseIntfMap[ifindex]; ok {
-			deviceInfo.baseIntfMap[ifindex].pVid = pvid
-		} else {
-			logging.GetLogger().Errorf("The ifindex(%d) is not exist in baseIntfMap", ifindex)
-		}
-	}
-
-	return 0
-}
-
 func getBaseIntfPvidCallback(pdu gosnmp.SnmpPDU) error {
 
 	ifindexStr := strings.TrimPrefix(pdu.Name, OidDot1qPvid+".")
 	ifindex, _ := strconv.Atoi(ifindexStr)
+	if pdu.Value == nil {
+		return nil
+	}
 	pvid := pdu.Value.(uint)
 
 	deviceInfo, _ := deviceInfoMap[boardSnProbe]
@@ -1588,6 +1561,9 @@ func getVlanIntfCallback(pdu gosnmp.SnmpPDU) error {
 	indexStr := strings.SplitN(markIndexStr, ".", 2)
 	ifindex, _ := strconv.Atoi(indexStr[1])
 
+	if pdu.Value == nil {
+		return nil
+	}
 	vid := pdu.Value.(uint)
 
 	var vlanInfo *vlanTable = new(vlanTable)
@@ -1642,7 +1618,7 @@ func getVlanIntf(ipAddr string, readKey *string) error {
 func deviceScan(scanLayer int, ipAddr string) (int, error) {
 	var readKeyFind string
 
-	logging.GetLogger().Errorf("**************scan layer %d ip %s begin***************", scanLayer, ipAddr)
+	logging.GetLogger().Debugf("**************scan layer %d ip %s begin***************", scanLayer, ipAddr)
 
 	if ip := net.ParseIP(ipAddr); ip == nil {
 		logging.GetLogger().Errorf("ip %s is invalid", ipAddr)
@@ -1652,14 +1628,14 @@ func deviceScan(scanLayer int, ipAddr string) (int, error) {
 	for _, deviceInfo := range deviceInfoMap {
 		if deviceInfo.managementIp == ipAddr {
 			logging.GetLogger().Debugf("ip %s has been already scanned", ipAddr)
-			logging.GetLogger().Errorf("**************scan layer %d ip %s end***************", scanLayer, ipAddr)
+			logging.GetLogger().Debugf("**************scan layer %d ip %s end***************", scanLayer, ipAddr)
 			return 0, nil
 		}
 	}
 
 	_, err := getDeviceInfo(ipAddr, &readKeyFind, scanLayer)
 	if err != nil {
-		logging.GetLogger().Errorf("**************scan layer %d ip %s end***************", scanLayer, ipAddr)
+		logging.GetLogger().Debugf("**************scan layer %d ip %s end***************", scanLayer, ipAddr)
 		return 0, err
 	}
 
@@ -1685,7 +1661,7 @@ func deviceScan(scanLayer int, ipAddr string) (int, error) {
 		ipIntfAddrTableMap = make(map[string]*ipIntfAddrTable)
 	*/
 
-	logging.GetLogger().Errorf("**************scan layer %d ip %s end***************", scanLayer, ipAddr)
+	logging.GetLogger().Debugf("**************scan layer %d ip %s end***************", scanLayer, ipAddr)
 
 	return 0, nil
 }
@@ -1703,7 +1679,7 @@ func printTopoRelation(topoRe *topoRelation) {
 
 func printDeviceInfo(deviceInfo *deviceInfo) {
 
-	logging.GetLogger().Errorf("deviceInfo name %s", deviceInfo.name)
+	logging.GetLogger().Debugf("deviceInfo name %s", deviceInfo.name)
 	logging.GetLogger().Debugf("           boardSn %s", deviceInfo.boardSn)
 	logging.GetLogger().Debugf("           managementIp %s", deviceInfo.managementIp)
 	logging.GetLogger().Debugf("           switchMac %s", deviceInfo.switchMac)
@@ -1719,7 +1695,7 @@ func printDeviceInfo(deviceInfo *deviceInfo) {
 	*/
 
 	for _, lldpInfo := range deviceInfo.lldpMap {
-		logging.GetLogger().Debugf("lldpInfo   ifindex %d", lldpInfo.ifindex)
+		logging.GetLogger().Debugf("lldpInfo   localPortNum %d", lldpInfo.locPortNum)
 		logging.GetLogger().Debugf("           localPort %s", lldpInfo.localPort)
 		logging.GetLogger().Debugf("           remotePort %s", lldpInfo.remotePort)
 		logging.GetLogger().Debugf("           chassisId %s", lldpInfo.chassisId)
@@ -1762,7 +1738,7 @@ func scanLayerDevice(scanLayer int) int {
 	for _, deviceInfo := range deviceInfoMap {
 		i++
 		logging.GetLogger().Debugf("printDeviceInfo count  %d", i)
-		logging.GetLogger().Errorf("deviceInfo name %s", deviceInfo.name)
+		logging.GetLogger().Debugf("deviceInfo name %s", deviceInfo.name)
 		logging.GetLogger().Debugf("           info %s", deviceInfo.info)
 		logging.GetLogger().Debugf("           layer %d", deviceInfo.layer)
 		if deviceInfo.layer != scanLayer-1 {
@@ -1771,7 +1747,7 @@ func scanLayerDevice(scanLayer int) int {
 		for _, lldpInfo := range deviceInfo.lldpMap {
 			j++
 			logging.GetLogger().Debugf("lldpInfo count %d of device %s", j, deviceInfo.managementIp)
-			logging.GetLogger().Debugf("           ifindex %d", lldpInfo.ifindex)
+			logging.GetLogger().Debugf("           locPortNum%d", lldpInfo.locPortNum)
 			logging.GetLogger().Debugf("           localPort %s", lldpInfo.localPort)
 			logging.GetLogger().Debugf("           remotePort %s", lldpInfo.remotePort)
 			logging.GetLogger().Debugf("           chassisId %s", lldpInfo.chassisId)
@@ -2097,10 +2073,10 @@ func printAllRelaTopo() {
 
 func (s *SnmpProbe) createRootNode(deviceInfo *deviceInfo) *graph.Node {
 	m := graph.Metadata{
-		"Name":       deviceInfo.name,
-		"Type":       "host",
-		"Switch MAC": deviceInfo.switchMac,
-		"IPV4":       deviceInfo.managementIp,
+		"Hostname":      deviceInfo.name,
+		"Type":          "host",
+		"Switch MAC":    deviceInfo.switchMac,
+		"Management IP": deviceInfo.managementIp,
 	}
 
 	logging.GetLogger().Debugf("SNMP Root Node ADD name:%s boardSn:%s info %s", deviceInfo.name, deviceInfo.boardSn, deviceInfo.info)
@@ -2118,18 +2094,21 @@ func (s *SnmpProbe) createNode(snmpNode *snmpNode, deviceInfo *deviceInfo) (*gra
 	var intf *graph.Node
 
 	metadata := graph.Metadata{
-		"Name":        snmpNode.name,
+		"Port":        snmpNode.name,
 		"Description": snmpNode.description,
-		"MTU":         1518,
-		"Speed":       "10G/s",
-		"State":       snmpNode.state,
-		"Native Vlan": snmpNode.pVid,
+		//"MTU":         1518,
+		//"Speed":       "10G/s",
+		//"State":       snmpNode.state,
+	}
+
+	if snmpNode.pVid != 0 {
+		metadata["Native Vlan"] = snmpNode.pVid
 	}
 
 	if snmpNode.vlanName != "" {
-		metadata["Vlan Interface"] = snmpNode.vlanName
-		metadata["Vlan IP"] = snmpNode.vlanIp
-		metadata["Vlan Mask"] = snmpNode.vlanMask
+		metadata["Vlan-interface"] = snmpNode.vlanName
+		metadata["Vlan-interface Addr"] = snmpNode.vlanIp
+		metadata["Vlan-interface Mask"] = snmpNode.vlanMask
 	}
 
 	logging.GetLogger().Debugf("SNMP Node CHECK %s(%d,%s) within %s", snmpNode.name, snmpNode.ifindex, snmpNode.ifType, deviceInfo.rootNode.String())
@@ -2138,7 +2117,7 @@ func (s *SnmpProbe) createNode(snmpNode *snmpNode, deviceInfo *deviceInfo) (*gra
 	defer s.Graph.Unlock()
 
 	//firstChild := s.Graph.LookupFirstChild(deviceInfo.rootNode, graph.Metadata{"Name": snmpNode.name, "IfIndex": snmpNode.ifindex})
-	firstChild := s.Graph.LookupFirstChild(deviceInfo.rootNode, graph.Metadata{"Name": snmpNode.name})
+	firstChild := s.Graph.LookupFirstChild(deviceInfo.rootNode, graph.Metadata{"Port": snmpNode.name})
 	if firstChild != nil {
 		logging.GetLogger().Debugf("find child node %s", snmpNode.name)
 		return firstChild, nil
@@ -2158,12 +2137,28 @@ func (s *SnmpProbe) createNode(snmpNode *snmpNode, deviceInfo *deviceInfo) (*gra
 	return intf, nil
 }
 
+func getLocalPortIndex(device *deviceInfo, lldpInfo *switchLldp) int {
+	if _, ok := device.baseIntfMap[lldpInfo.locPortNum]; ok {
+		return lldpInfo.locPortNum
+	}
+	for index, baseInfo := range device.baseIntfMap {
+		if lldpInfo.localPort == baseInfo.name {
+			return index
+		}
+		if lldpInfo.localPortDesc == baseInfo.name {
+			return index
+		}
+	}
+
+	return 0
+}
+
 func (s *SnmpProbe) createAllNode() {
 
 	nodeMap = make(map[string]*snmpNode)
 
 	for _, deviceInfo := range deviceInfoMap {
-		logging.GetLogger().Errorf("create Node of device %s", deviceInfo.info)
+		logging.GetLogger().Debugf("create Node of device %s", deviceInfo.info)
 
 		deviceInfo.rootNode = s.createRootNode(deviceInfo)
 		deviceInfo.rootSnmpNode = new(snmpNode)
@@ -2173,7 +2168,7 @@ func (s *SnmpProbe) createAllNode() {
 		nodeMap[deviceInfo.info] = deviceInfo.rootSnmpNode
 
 		for _, lldpInfo := range deviceInfo.lldpMap {
-			logging.GetLogger().Debugf("lldpInfo   ifindex %d", lldpInfo.ifindex)
+			logging.GetLogger().Debugf("lldpInfo   locPortNum %d", lldpInfo.locPortNum)
 			logging.GetLogger().Debugf("           localPort %s", lldpInfo.localPort)
 			logging.GetLogger().Debugf("           remotePort %s", lldpInfo.remotePort)
 			logging.GetLogger().Debugf("           chassisId %s", lldpInfo.chassisId)
@@ -2181,7 +2176,12 @@ func (s *SnmpProbe) createAllNode() {
 
 			var node *snmpNode = new(snmpNode)
 			node.name = lldpInfo.localPort
-			node.ifindex = lldpInfo.ifindex
+			ifindex := getLocalPortIndex(deviceInfo, lldpInfo)
+			if ifindex == 0 {
+				logging.GetLogger().Debugf("get locPort %s index failed", lldpInfo.localPort)
+				continue
+			}
+			node.ifindex = ifindex
 			node.state = "UP"
 			node.info = deviceInfo.managementIp + ":" + lldpInfo.localPort
 
@@ -2194,11 +2194,13 @@ func (s *SnmpProbe) createAllNode() {
 			}
 
 			node.pVid = pVid
-			node.vlanName = deviceInfo.vlanMap[pVid].name
-			node.vlanIfindex = deviceInfo.vlanMap[pVid].ifindex
-			node.vlanIp = deviceInfo.vlanMap[pVid].ip
-			node.vlanMask = deviceInfo.vlanMap[pVid].mask
-			node.vlanState = deviceInfo.vlanMap[pVid].state
+			if len(deviceInfo.vlanMap) != 0 {
+				node.vlanName = deviceInfo.vlanMap[pVid].name
+				node.vlanIfindex = deviceInfo.vlanMap[pVid].ifindex
+				node.vlanIp = deviceInfo.vlanMap[pVid].ip
+				node.vlanMask = deviceInfo.vlanMap[pVid].mask
+				node.vlanState = deviceInfo.vlanMap[pVid].state
+			}
 
 			intfNode, err := s.createNode(node, deviceInfo)
 			if err == nil {
@@ -2212,13 +2214,13 @@ func (s *SnmpProbe) createAllNode() {
 
 func (s *SnmpProbe) deleteNodes() error {
 
-	logging.GetLogger().Errorf("delete all the nodes which is not detected this time")
+	logging.GetLogger().Debugf("delete all the nodes which is not detected this time")
 
 	for info, snmpNode := range oldNodeMap {
 		if _, ok := nodeMap[info]; !ok {
-			logging.GetLogger().Errorf("delete node: %v", snmpNode)
+			logging.GetLogger().Debugf("delete node: %v", snmpNode)
 			if snmpNode.root {
-				logging.GetLogger().Errorf("delete root node: %v", snmpNode)
+				logging.GetLogger().Debugf("delete root node: %v", snmpNode)
 				s.Graph.DelHostGraph(info)
 			} else {
 				s.Graph.DelNode(snmpNode.node)
@@ -2251,7 +2253,7 @@ func (s *SnmpProbe) createEdge(edge *snmpEdge) error {
 		logging.GetLogger().Debugf("snmp.AddLayer2Link")
 		topology.AddLayer2Link(s.Graph, fromNode.node, toNode.node, m)
 	} else {
-		logging.GetLogger().Errorf("already has edge between %s and %s", from, to)
+		logging.GetLogger().Debugf("already has edge between %s and %s", from, to)
 		return errors.New("already linked")
 	}
 
@@ -2263,10 +2265,10 @@ func (s *SnmpProbe) createAllEdge() {
 	edgeMap = make(map[string]*snmpEdge)
 
 	for _, deviceInfo := range deviceInfoMap {
-		logging.GetLogger().Errorf("create Edge of device %s", deviceInfo.info)
+		logging.GetLogger().Debugf("create Edge of device %s", deviceInfo.info)
 
 		for _, lldpInfo := range deviceInfo.lldpMap {
-			logging.GetLogger().Debugf("lldpInfo   ifindex %d", lldpInfo.ifindex)
+			logging.GetLogger().Debugf("lldpInfo   locPortNum %d", lldpInfo.locPortNum)
 			logging.GetLogger().Debugf("           localPort %s", lldpInfo.localPort)
 			logging.GetLogger().Debugf("           remotePort %s", lldpInfo.remotePort)
 			logging.GetLogger().Debugf("           chassisId %s", lldpInfo.chassisId)
@@ -2291,7 +2293,7 @@ func (s *SnmpProbe) createAllEdge() {
 }
 
 func printAllEdge() {
-	logging.GetLogger().Errorf("printAllEdge ...")
+	logging.GetLogger().Debugf("printAllEdge ...")
 	for info, _ := range edgeMap {
 		logging.GetLogger().Debugf("Edge info: %s", info)
 	}
@@ -2329,7 +2331,7 @@ func (s *SnmpProbe) startScan() {
 }
 
 func (s *SnmpProbe) detectTopology(detectInfo *TopologyDetect) {
-	logging.GetLogger().Errorf("detectInfo IP %s, period %d, community %s", detectInfo.IP, detectInfo.Period, detectInfo.Community)
+	logging.GetLogger().Debugf("detectInfo IP %s, period %d, community %s", detectInfo.IP, detectInfo.Period, detectInfo.Community)
 
 	confInfo.coreIp = detectInfo.IP
 	confInfo.readKey = detectInfo.Community
@@ -2401,8 +2403,8 @@ func InitSnmpConfig() error {
 		logging.GetLogger().Debug("snmp Unmarshal JSON file failed, err %s", err.Error())
 		return err
 	}
-	logging.GetLogger().Errorf("InitSnmpConfig config %v", config)
-	logging.GetLogger().Errorf("InitSnmpConfig IP %s, period %d community %s", config.Detectip, config.Detectperiod, config.Community)
+	logging.GetLogger().Debugf("InitSnmpConfig config %v", config)
+	logging.GetLogger().Debugf("InitSnmpConfig IP %s, period %d community %s", config.Detectip, config.Detectperiod, config.Community)
 
 	if ip := net.ParseIP(config.Detectip); ip == nil {
 		logging.GetLogger().Errorf("InitSnmpConfig get wrong ip address")

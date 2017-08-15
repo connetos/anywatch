@@ -117,7 +117,7 @@ TopologyGraphLayout.prototype = {
     var width = bounds.width, height = bounds.height;
     var midX = bounds.x + width / 2, midY = bounds.y + height / 2;
     if (width === 0 || height === 0) return;
-    var scale = 0.75 / Math.max(width / fullWidth, height / fullHeight);
+    var scale = 0.65 / Math.max(width / fullWidth, height / fullHeight);
     var translate = [fullWidth / 2 - midX * scale, fullHeight / 2 - midY * scale];
 
     var t = d3.zoomIdentity

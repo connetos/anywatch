@@ -200,7 +200,7 @@ var TopologyComponent = {
 
     currentNodeMetadata: function() {
       if (!this.currentNode) return {};
-      return this.extractMetadata(this.currentNode.metadata, ['LastMetric', 'Statistics', 'TID']);
+      return this.extractMetadata(this.currentNode.metadata, ['LastMetric', 'Statistics', 'TID', 'Type']);
     },
 
     currentNodeStats: function() {

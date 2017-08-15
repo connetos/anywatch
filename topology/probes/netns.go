@@ -241,7 +241,7 @@ func (u *NetNSProbe) start() {
 
 // Start the probe
 func (u *NetNSProbe) Start() {
-	go u.start()
+	//go u.start()
 }
 
 // Stop the probe
